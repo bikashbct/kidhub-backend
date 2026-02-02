@@ -37,6 +37,17 @@ type ApiIndex = {
   learningitems?: string;
 };
 
+const getColorFromString = (value: string): string => {
+  let hash = 0;
+
+  for (let i = 0; i < value.length; i += 1) {
+    hash = value.charCodeAt(i) + ((hash << 5) - hash);
+  }
+
+  const color = (hash & 0x00ffffff).toString(16).toUpperCase();
+  return `#${"000000".substring(0, 6 - color.length)}${color}`;
+};
+
 const normalizeList = <T,>(data: ApiResponse<T>): T[] => {
   if (Array.isArray(data)) {
     return data;
@@ -132,6 +143,9 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
   const currentImageUrl = currentItem
     ? normalizeMediaUrl(currentItem.object_image, requestHostname)
     : null;
+  const fallbackColor = currentItem
+    ? getColorFromString(currentItem.content_name ?? currentItem.name)
+    : "#A3E635";
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-100 text-slate-900 dark:from-zinc-950 dark:via-zinc-950 dark:to-zinc-900 dark:text-zinc-50">
@@ -179,24 +193,24 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
           </Card>
         ) : (
           <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-            <Card className="relative overflow-hidden border-slate-200/70 bg-white/80 shadow-sm backdrop-blur dark:border-zinc-800/70 dark:bg-zinc-950/70">
+            <Card className="relative overflow-hidden border-slate-200/70 bg-white/90 shadow-sm backdrop-blur dark:border-zinc-800/70 dark:bg-zinc-950/70">
               <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-500 via-blue-500 to-indigo-500" />
-              <CardHeader className="space-y-3">
+              <CardHeader className="space-y-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="secondary" className="px-3 py-1 text-sm">
-                    {currentItem.name}
+                    {category?.name ?? "Category"}
                   </Badge>
                   {currentItem.order !== undefined && currentItem.order !== null ? (
                     <Badge className="px-3 py-1 text-sm">
-                      Order {currentItem.order + 1}
+                      Lesson {currentItem.order + 1}
                     </Badge>
                   ) : null}
                 </div>
-                <CardTitle className="text-2xl">
-                  {currentItem.content_name ?? "Lesson"}
+                <CardTitle className="text-2xl font-semibold tracking-tight sm:text-3xl">
+                  {currentItem.name}
                 </CardTitle>
-                <CardDescription className="text-sm text-slate-600 dark:text-zinc-300">
-                  Focus on the content, then move to the next item in sequence.
+                <CardDescription className="text-base text-slate-600 dark:text-zinc-300">
+                  Big, clear learning cards made for kids.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -211,30 +225,69 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
                     />
                   </div>
                 ) : (
-                  <div className="flex aspect-[4/3] w-full items-center justify-center rounded-xl border border-dashed border-slate-200/70 text-sm text-slate-500 dark:border-zinc-800/70 dark:text-zinc-400">
-                    No image available
+                  <div
+                    className="flex aspect-[4/3] w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200/70 text-center text-slate-700 dark:border-zinc-800/70 dark:text-zinc-200"
+                    style={{ backgroundColor: `${fallbackColor}22` }}
+                  >
+                    <span className="text-base font-semibold sm:text-lg">
+                      Color card
+                    </span>
+                    <span className="rounded-full bg-white/80 px-4 py-1 text-sm font-semibold text-slate-700 shadow-sm dark:bg-zinc-900/70 dark:text-zinc-100">
+                      {fallbackColor}
+                    </span>
                   </div>
                 )}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 text-center shadow-sm dark:border-zinc-800/70 dark:bg-zinc-950/70">
+                    <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+                      Name
+                    </p>
+                    <p className="text-xl font-semibold text-slate-900 sm:text-2xl dark:text-zinc-50">
+                      {currentItem.name}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 text-center shadow-sm dark:border-zinc-800/70 dark:bg-zinc-950/70">
+                    <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+                      Content name
+                    </p>
+                    <p className="text-xl font-semibold text-slate-900 sm:text-2xl dark:text-zinc-50">
+                      {currentItem.content_name ?? currentItem.name}
+                    </p>
+                  </div>
+                </div>
                 <div className="flex flex-wrap gap-3">
                   {prevItem ? (
-                    <Button asChild variant="outline">
+                    <Button
+                      asChild
+                      variant="outline"
+                      className="h-12 rounded-full px-6 text-base font-semibold"
+                    >
                       <Link href={`/category/${categoryId}?item=${prevItem.id}`}>
-                        Previous
+                        ⬅️ Previous
                       </Link>
                     </Button>
                   ) : (
-                    <Button variant="outline" disabled>
-                      Previous
+                    <Button
+                      variant="outline"
+                      disabled
+                      className="h-12 rounded-full px-6 text-base font-semibold"
+                    >
+                      ⬅️ Previous
                     </Button>
                   )}
                   {nextItem ? (
-                    <Button asChild>
+                    <Button asChild className="h-12 rounded-full px-6 text-base font-semibold">
                       <Link href={`/category/${categoryId}?item=${nextItem.id}`}>
-                        Next
+                        Next ➡️
                       </Link>
                     </Button>
                   ) : (
-                    <Button disabled>Next</Button>
+                    <Button
+                      disabled
+                      className="h-12 rounded-full px-6 text-base font-semibold"
+                    >
+                      Next ➡️
+                    </Button>
                   )}
                 </div>
               </CardContent>
