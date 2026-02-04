@@ -3,7 +3,7 @@ from .models import CategoryConfig, LearnItem
 
 
 class CategorySerializer(serializers.ModelSerializer):
-    id = serializers.IntegerField(source='category', read_only=True)
+    #id = serializers.IntegerField(source='category', read_only=True) not required because category is already PK
     slug = serializers.SlugField(read_only=True)
 
     class Meta:
