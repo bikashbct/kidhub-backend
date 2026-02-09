@@ -3,15 +3,28 @@ from .models import CategoryConfig, LearnItem
 
 
 class CategorySerializer(serializers.ModelSerializer):
-    #id = serializers.IntegerField(source='category', read_only=True) not required because category is already PK
-    slug = serializers.SlugField(read_only=True)
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        lang = (self.context.get('lang') or 'en').lower()
+
+        if lang == 'ne' and instance.name_ne:
+            data['name'] = instance.name_ne
+        elif lang == 'hi' and instance.name_hi:
+            data['name'] = instance.name_hi
+
+        return data
 
     class Meta:
         model = CategoryConfig
-        fields = ['id', 'name', 'slug', 'image']
+        fields = ['id', 'name', 'name_ne', 'name_hi', 'slug', 'image']
+        read_only_fields = ['slug']
 
 class LearnItemSerializer(serializers.ModelSerializer):
-    slug = serializers.SlugField(read_only=True)
+    category = serializers.SlugRelatedField(
+        slug_field='category',
+        queryset=CategoryConfig.objects.all(),
+    )
+
     def validate(self, attrs):
         attrs = super().validate(attrs)
         object_image = attrs.get('object_image')
@@ -37,3 +50,4 @@ class LearnItemSerializer(serializers.ModelSerializer):
             'audio',
             'order',
         ]
+        read_only_fields = ['slug']

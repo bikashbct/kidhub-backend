@@ -20,6 +20,14 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CategorySerializer
     permission_classes = [AdminWriteOrReadOnly]
 
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        lang = (self.request.query_params.get('lang') or 'en').lower()
+        if lang not in ('en', 'ne', 'hi'):
+            lang = 'en'
+        context['lang'] = lang
+        return context
+
 @method_decorator(cache_page(settings.CACHE_TTL), name="list")
 @method_decorator(cache_page(settings.CACHE_TTL), name="retrieve")
 class LearnItemViewSet(viewsets.ModelViewSet):

@@ -1,0 +1,15 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+    <h1>{{ title }}</h1>
+    <form method="post" enctype="multipart/form-data" novalidate>
+        {% csrf_token %}
+        <div>
+            <input type="file" name="xlsx_file" accept=".xlsx" required>
+        </div>
+        <div style="margin-top: 1rem;">
+            <button type="submit" class="default">Import</button>
+            <a href="..">Cancel</a>
+        </div>
+    </form>
+{% endblock %}

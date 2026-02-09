@@ -4,7 +4,7 @@ from .views import CategoryViewSet, LearnItemViewSet
 
 router = DefaultRouter()
 router.register(r'categories', CategoryViewSet, basename='category')
-router.register(r'items', LearnItemViewSet)
+router.register(r'items', LearnItemViewSet, basename='learnitem')
 
 urlpatterns = [
     path('', include(router.urls)),

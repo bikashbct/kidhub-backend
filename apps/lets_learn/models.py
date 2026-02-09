@@ -1,11 +1,12 @@
-import re
-from io import BytesIO
-
-from django.core.exceptions import ValidationError
-from django.core.files.base import ContentFile
 from django.db import models
 from django.utils.text import slugify
-from PIL import Image
+
+from .services import (
+    generate_color_image,
+    get_category_translation,
+    normalize_color,
+    validate_object_fields,
+)
 
 
 class LearnCategory(models.IntegerChoices):
@@ -25,12 +26,17 @@ class LearnCategory(models.IntegerChoices):
     SECTION_14 = 14, "Shapes"
 
 
+LEARN_CATEGORY_ALL_SECTIONS = LearnCategory.choices
+
+
 class CategoryConfig(models.Model):
     category = models.PositiveSmallIntegerField(
-        choices=LearnCategory.choices,
-        primary_key=True,
+        choices=LEARN_CATEGORY_ALL_SECTIONS,
+        unique=True,
     )
     name = models.CharField(max_length=255)
+    name_ne = models.CharField(max_length=255, blank=True, null=True)
+    name_hi = models.CharField(max_length=255, blank=True, null=True)
     slug = models.SlugField(max_length=255, blank=True, allow_unicode=True)
     image = models.ImageField(upload_to='categories/', blank=True, null=True)
 
@@ -43,12 +49,21 @@ class CategoryConfig(models.Model):
 
     def save(self, *args, **kwargs):
         if self.name:
+            if not self.name_ne or not self.name_hi:
+                translated_ne, translated_hi = get_category_translation(self.name)
+                if not self.name_ne and translated_ne:
+                    self.name_ne = translated_ne
+                if not self.name_hi and translated_hi:
+                    self.name_hi = translated_hi
             self.slug = slugify(self.name, allow_unicode=True)
         super().save(*args, **kwargs)
 
 class LearnItem(models.Model):
-    category = models.PositiveSmallIntegerField(
-        choices=LearnCategory.choices,
+    category = models.ForeignKey(
+        CategoryConfig,
+        to_field='category',
+        on_delete=models.CASCADE,
+        related_name='items',
         db_column='category_id',
     )
     name = models.CharField(max_length=100)  
@@ -67,55 +82,20 @@ class LearnItem(models.Model):
         ]
 
     def __str__(self):
-        category_name = (
-            CategoryConfig.objects.filter(category=self.category)
-            .values_list('name', flat=True)
-            .first()
-        )
-        fallback = None
-        try:
-            fallback = LearnCategory(self.category).label
-        except ValueError:
-            fallback = str(self.category)
-
+        category_name = self.category.name if self.category_id else None
+        fallback = str(self.category_id) if self.category_id is not None else "Unknown"
         return f"{category_name or fallback} - {self.name}"
-
-    def _normalize_color(self, value: str) -> str:
-        value = value.strip()
-        color_re = re.compile(r"^#?[0-9a-fA-F]{3}$|^#?[0-9a-fA-F]{6}$")
-        if not color_re.match(value):
-            raise ValidationError({"object_color": "Invalid color code."})
-
-        if not value.startswith('#'):
-            value = f"#{value}"
-
-        if len(value) == 4:
-            value = f"#{value[1]}{value[1]}{value[2]}{value[2]}{value[3]}{value[3]}"
-
-        return value.lower()
-
-    def _generate_color_image(self, hex_color: str) -> ContentFile:
-        image = Image.new("RGB", (512, 512), hex_color)
-        buffer = BytesIO()
-        image.save(buffer, format="PNG")
-        return ContentFile(buffer.getvalue())
 
     def clean(self):
         super().clean()
-        if self.object_image and self.object_color:
-            raise ValidationError(
-                {
-                    "object_image": "Provide either object image or object color, not both.",
-                    "object_color": "Provide either object image or object color, not both.",
-                }
-            )
+        validate_object_fields(self.object_image, self.object_color)
 
     def save(self, *args, **kwargs):
         if self.name:
             self.slug = slugify(self.name, allow_unicode=True)
         self.full_clean()
         if self.object_color:
-            normalized = self._normalize_color(self.object_color)
+            normalized = normalize_color(self.object_color)
             self.object_color = normalized
 
             if not self.object_image:
@@ -123,7 +103,7 @@ class LearnItem(models.Model):
                 filename = f"{safe_name}_{normalized[1:]}.png"
                 self.object_image.save(
                     filename,
-                    self._generate_color_image(normalized),
+                    generate_color_image(normalized),
                     save=False,
                 )
 

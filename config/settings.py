@@ -119,8 +119,8 @@ REST_FRAMEWORK = {
     },
 }
 
-# Caching
-CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))
+# Caching (local in-memory only)
+CACHE_TTL = int(os.getenv("CACHE_TTL", "900"))
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
