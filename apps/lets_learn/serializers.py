@@ -1,4 +1,7 @@
+from django.core.exceptions import ValidationError
 from rest_framework import serializers
+
+from .services import validate_object_fields
 from .models import CategoryConfig, LearnItem
 
 
@@ -19,6 +22,15 @@ class CategorySerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'name_ne', 'name_hi', 'slug', 'image']
         read_only_fields = ['slug']
 
+
+def _build_file_url(request, file_field):
+    if not file_field:
+        return ''
+    if request:
+        return request.build_absolute_uri(file_field.url)
+    return file_field.url
+
+
 class LearnItemSerializer(serializers.ModelSerializer):
     category = serializers.SlugRelatedField(
         slug_field='category',
@@ -27,13 +39,13 @@ class LearnItemSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        object_image = attrs.get('object_image')
-        object_color = attrs.get('object_color')
-
-        if object_image and object_color:
-            raise serializers.ValidationError(
-                "Provide either object_image or object_color, not both."
+        try:
+            validate_object_fields(
+                attrs.get('object_image'),
+                attrs.get('object_color'),
             )
+        except ValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict)
 
         return attrs
 
@@ -51,3 +63,31 @@ class LearnItemSerializer(serializers.ModelSerializer):
             'order',
         ]
         read_only_fields = ['slug']
+
+
+class LearnItemExportSerializer(serializers.ModelSerializer):
+    category = serializers.SerializerMethodField()
+    object_image_url = serializers.SerializerMethodField()
+    audio_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LearnItem
+        fields = [
+            'id',
+            'category',
+            'name',
+            'content_name',
+            'object_image_url',
+            'object_color',
+            'audio_url',
+            'order',
+        ]
+
+    def get_category(self, instance):
+        return instance.category_id
+
+    def get_object_image_url(self, instance):
+        return _build_file_url(self.context.get('request'), instance.object_image)
+
+    def get_audio_url(self, instance):
+        return _build_file_url(self.context.get('request'), instance.audio)

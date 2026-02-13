@@ -1,15 +1,12 @@
-import io
+import os
 
-from django.http import HttpResponse
-from rest_framework import status
+from drf_excel.mixins import XLSXFileMixin
+from drf_excel.renderers import XLSXRenderer
+from rest_framework import serializers, status
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
-
-
-EXPORT_CONTENT_TYPE = (
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
 
 
 def header_map(values) -> dict[str, int]:
@@ -21,24 +18,35 @@ def header_map(values) -> dict[str, int]:
     return mapping
 
 
-class OpenpyxlXlsxMixin:
-    export_sheet_title = "Sheet1"
-    export_filename = "export.xlsx"
+class XlsxImportSerializer(serializers.Serializer):
+    xlsx_file = serializers.FileField()
 
-    def get_export_headers(self):
-        raise NotImplementedError
 
-    def get_export_rows(self, request):
-        raise NotImplementedError
+class XlsxExportImportMixin(XLSXFileMixin):
+    export_serializer_class = None
+    import_serializer_class = XlsxImportSerializer
+    filename = "export.xlsx"
 
-    def get_export_sheet_title(self):
-        return self.export_sheet_title
+    def get_export_serializer_class(self):
+        if self.export_serializer_class is None:
+            raise AssertionError(
+                "XlsxExportImportMixin requires `export_serializer_class` to be set."
+            )
+        return self.export_serializer_class
 
-    def get_export_filename(self):
-        return self.export_filename
+    def get_import_serializer_class(self):
+        return self.import_serializer_class
+
+    def get_serializer_class(self):
+        if getattr(self, "action", None) == "import_xlsx":
+            return self.get_import_serializer_class()
+        return super().get_serializer_class()
 
     def get_import_required_headers(self):
         return []
+
+    def get_import_expected_filename(self, request):
+        return None
 
     def get_import_row_value(self, row, header_mapping, key):
         idx = header_mapping.get(key)
@@ -47,41 +55,48 @@ class OpenpyxlXlsxMixin:
     def handle_import_row(self, row, header_mapping):
         raise NotImplementedError
 
-    @action(detail=False, methods=["get"], permission_classes=[IsAdminUser], url_path="export-xlsx")
+    @action(
+        detail=False,
+        methods=["get"],
+        permission_classes=[IsAdminUser],
+        renderer_classes=[XLSXRenderer],
+        url_path="export-xlsx",
+    )
     def export_xlsx(self, request):
-        from openpyxl import Workbook
-
-        wb = Workbook()
-        ws = wb.active
-        ws.title = self.get_export_sheet_title()
-        ws.append(self.get_export_headers())
-
-        for row in self.get_export_rows(request):
-            ws.append(row)
-
-        output = io.BytesIO()
-        wb.save(output)
-        output.seek(0)
-
-        response = HttpResponse(
-            output.getvalue(),
-            content_type=EXPORT_CONTENT_TYPE,
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_export_serializer_class()(
+            queryset,
+            many=True,
+            context={"request": request},
         )
-        response["Content-Disposition"] = (
-            f"attachment; filename={self.get_export_filename()}"
-        )
-        return response
+        return Response(serializer.data)
 
-    @action(detail=False, methods=["post"], permission_classes=[IsAdminUser], url_path="import-xlsx")
+    @action(
+        detail=False,
+        methods=["post"],
+        permission_classes=[IsAdminUser],
+        parser_classes=[MultiPartParser, FormParser],
+        url_path="import-xlsx",
+    )
     def import_xlsx(self, request):
         from openpyxl import load_workbook
 
-        upload = request.FILES.get("xlsx_file") or request.FILES.get("file")
-        if not upload:
-            return Response(
-                {"detail": "Missing XLSX file (field: xlsx_file or file)."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        upload = serializer.validated_data["xlsx_file"]
+
+        try:
+            expected_filename = self.get_import_expected_filename(request)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if expected_filename:
+            actual_name = os.path.basename(upload.name or "")
+            if actual_name != expected_filename:
+                return Response(
+                    {"detail": f"Filename must be {expected_filename}."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         wb = load_workbook(upload)
         ws = wb.active
