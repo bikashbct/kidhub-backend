@@ -1,18 +1,14 @@
-import io
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from django.conf import settings
 from django.core.files.base import ContentFile
-from django.http import HttpResponse
 from django.utils.decorators import method_decorator
 from django.utils.text import slugify
 from django.views.decorators.cache import cache_page
-from openpyxl import Workbook, load_workbook
-from rest_framework import status, viewsets
-from rest_framework.decorators import action
-from rest_framework.permissions import BasePermission, SAFE_METHODS, IsAdminUser
-from rest_framework.response import Response
+from rest_framework import mixins, viewsets
+from rest_framework.permissions import BasePermission, SAFE_METHODS
+from .mixins import OpenpyxlXlsxMixin
 from .models import CategoryConfig, LearnItem
 from .serializers import CategorySerializer, LearnItemSerializer
 
@@ -21,6 +17,34 @@ class AdminWriteOrReadOnly(BasePermission):
         if request.method in SAFE_METHODS:
             return True
         return bool(request.user and request.user.is_authenticated and request.user.is_staff)
+
+
+class CreateListRetrieveViewSet(
+    mixins.CreateModelMixin,
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    viewsets.GenericViewSet,
+):
+    """
+    A viewset that provides `retrieve`, `create`, and `list` actions.
+
+    To use it, override the class and set the `.queryset` and
+    `.serializer_class` attributes.
+    """
+
+    def get_queryset(self):
+        if self.queryset is None:
+            raise AssertionError(
+                "CreateListRetrieveViewSet requires `.queryset` to be set."
+            )
+        return super().get_queryset()
+
+    def get_serializer_class(self):
+        if self.serializer_class is None:
+            raise AssertionError(
+                "CreateListRetrieveViewSet requires `.serializer_class` to be set."
+            )
+        return super().get_serializer_class()
 
 
 def _download_to_content_file(url: str, fallback_name: str) -> tuple[ContentFile, str]:
@@ -33,18 +57,9 @@ def _download_to_content_file(url: str, fallback_name: str) -> tuple[ContentFile
     return ContentFile(content), filename
 
 
-def _header_map(values) -> dict[str, int]:
-    header_map: dict[str, int] = {}
-    for idx, value in enumerate(values):
-        if value is None:
-            continue
-        header_map[str(value).strip()] = idx
-    return header_map
-
-
 @method_decorator(cache_page(settings.CACHE_TTL), name="list")
 @method_decorator(cache_page(settings.CACHE_TTL), name="retrieve")
-class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
+class CategoryViewSet(OpenpyxlXlsxMixin, viewsets.ReadOnlyModelViewSet):
     queryset = CategoryConfig.objects.all()
     serializer_class = CategorySerializer
     permission_classes = [AdminWriteOrReadOnly]
@@ -57,91 +72,60 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
         context['lang'] = lang
         return context
 
-    @action(detail=False, methods=["get"], permission_classes=[IsAdminUser], url_path="export-xlsx")
-    def export_xlsx(self, request):
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Categories"
-        ws.append(["category", "name", "slug", "image_url"])
+    def get_export_sheet_title(self):
+        return "Categories"
 
+    def get_export_filename(self):
+        return "categories.xlsx"
+
+    def get_export_headers(self):
+        return ["category", "name", "slug", "image_url"]
+
+    def get_export_rows(self, request):
         for category in self.get_queryset():
             image_url = (
                 request.build_absolute_uri(category.image.url)
                 if category.image
                 else ""
             )
-            ws.append([
+            yield [
                 category.category,
                 category.name,
                 category.slug,
                 image_url,
-            ])
+            ]
 
-        output = io.BytesIO()
-        wb.save(output)
-        output.seek(0)
+    def get_import_required_headers(self):
+        return ["category"]
 
-        response = HttpResponse(
-            output.getvalue(),
-            content_type=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
+    def handle_import_row(self, row, header_mapping):
+        category_value = self.get_import_row_value(row, header_mapping, "category")
+        name = self.get_import_row_value(row, header_mapping, "name")
+        image_url = self.get_import_row_value(row, header_mapping, "image_url")
+
+        if not category_value:
+            return "skipped"
+
+        category_id = int(category_value)
+        category, was_created = CategoryConfig.objects.get_or_create(
+            category=category_id,
+            defaults={"name": name or f"Category {category_id}"},
         )
-        response["Content-Disposition"] = "attachment; filename=categories.xlsx"
-        return response
 
-    @action(detail=False, methods=["post"], permission_classes=[IsAdminUser], url_path="import-xlsx")
-    def import_xlsx(self, request):
-        upload = request.FILES.get("xlsx_file") or request.FILES.get("file")
-        if not upload:
-            return Response(
-                {"detail": "Missing XLSX file (field: xlsx_file or file)."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if name:
+            category.name = name
 
-        wb = load_workbook(upload)
-        ws = wb.active
-        header_map = _header_map([cell.value for cell in ws[1]])
+        if image_url:
+            fallback = f"category_{slugify(category.name) or category_id}.png"
+            content, filename = _download_to_content_file(image_url, fallback)
+            category.image.save(filename, content, save=False)
 
-        def get_value(row, key):
-            idx = header_map.get(key)
-            return row[idx] if idx is not None else None
-
-        created = 0
-        updated = 0
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            category_value = get_value(row, "category")
-            name = get_value(row, "name")
-            image_url = get_value(row, "image_url")
-
-            if not category_value:
-                continue
-
-            category_id = int(category_value)
-            category, was_created = CategoryConfig.objects.get_or_create(
-                category=category_id,
-                defaults={"name": name or f"Category {category_id}"},
-            )
-            if was_created:
-                created += 1
-            else:
-                updated += 1
-
-            if name:
-                category.name = name
-
-            if image_url:
-                fallback = f"category_{slugify(category.name) or category_id}.png"
-                content, filename = _download_to_content_file(image_url, fallback)
-                category.image.save(filename, content, save=False)
-
-            category.save()
-
-        return Response({"created": created, "updated": updated})
+        category.save()
+        return "created" if was_created else "updated"
 
 @method_decorator(cache_page(settings.CACHE_TTL), name="list")
 @method_decorator(cache_page(settings.CACHE_TTL), name="retrieve")
-class LearnItemViewSet(viewsets.ModelViewSet):
+class LearnItemViewSet(OpenpyxlXlsxMixin, CreateListRetrieveViewSet):
     queryset = LearnItem.objects.all()
     serializer_class = LearnItemSerializer
     filterset_fields = ['category']
@@ -154,24 +138,25 @@ class LearnItemViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(category=category_id)
         return queryset
 
-    @action(detail=False, methods=["get"], permission_classes=[IsAdminUser], url_path="export-xlsx")
-    def export_xlsx(self, request):
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "LearnItems"
-        ws.append(
-            [
-                "id",
-                "category",
-                "name",
-                "content_name",
-                "object_image_url",
-                "object_color",
-                "audio_url",
-                "order",
-            ]
-        )
+    def get_export_sheet_title(self):
+        return "LearnItems"
 
+    def get_export_filename(self):
+        return "learn_items.xlsx"
+
+    def get_export_headers(self):
+        return [
+            "id",
+            "category",
+            "name",
+            "content_name",
+            "object_image_url",
+            "object_color",
+            "audio_url",
+            "order",
+        ]
+
+    def get_export_rows(self, request):
         for item in self.get_queryset():
             image_url = (
                 request.build_absolute_uri(item.object_image.url)
@@ -183,97 +168,67 @@ class LearnItemViewSet(viewsets.ModelViewSet):
                 if item.audio
                 else ""
             )
-            ws.append(
-                [
-                    item.id,
-                    item.category_id,
-                    item.name,
-                    item.content_name,
-                    image_url,
-                    item.object_color,
-                    audio_url,
-                    item.order,
-                ]
-            )
+            yield [
+                item.id,
+                item.category_id,
+                item.name,
+                item.content_name,
+                image_url,
+                item.object_color,
+                audio_url,
+                item.order,
+            ]
 
-        output = io.BytesIO()
-        wb.save(output)
-        output.seek(0)
+    def get_import_required_headers(self):
+        return ["category", "name"]
 
-        response = HttpResponse(
-            output.getvalue(),
-            content_type=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
+    def handle_import_row(self, row, header_mapping):
+        item_id = self.get_import_row_value(row, header_mapping, "id")
+        category_value = self.get_import_row_value(row, header_mapping, "category")
+        name = self.get_import_row_value(row, header_mapping, "name")
+        content_name = self.get_import_row_value(row, header_mapping, "content_name")
+        object_image_url = self.get_import_row_value(
+            row, header_mapping, "object_image_url"
         )
-        response["Content-Disposition"] = "attachment; filename=learn_items.xlsx"
-        return response
+        object_color = self.get_import_row_value(row, header_mapping, "object_color")
+        order = self.get_import_row_value(row, header_mapping, "order")
 
-    @action(detail=False, methods=["post"], permission_classes=[IsAdminUser], url_path="import-xlsx")
-    def import_xlsx(self, request):
-        upload = request.FILES.get("xlsx_file") or request.FILES.get("file")
-        if not upload:
-            return Response(
-                {"detail": "Missing XLSX file (field: xlsx_file or file)."},
-                status=status.HTTP_400_BAD_REQUEST,
+        if not category_value or not name:
+            return "skipped"
+
+        category = CategoryConfig.objects.filter(
+            category=int(category_value)
+        ).first()
+        if not category:
+            return "skipped"
+
+        if item_id:
+            item = LearnItem.objects.filter(id=int(item_id)).first()
+        else:
+            item = None
+
+        if not item:
+            item = LearnItem(category=category)
+            result = "created"
+        else:
+            result = "updated"
+
+        item.category = category
+        item.name = name
+        item.content_name = content_name
+        if order is not None:
+            item.order = int(order)
+
+        if object_image_url:
+            fallback = f"{slugify(name) or 'item'}.png"
+            content, filename = _download_to_content_file(
+                object_image_url, fallback
             )
+            item.object_image.save(filename, content, save=False)
+            item.object_color = None
+        elif object_color:
+            item.object_color = object_color
+            item.object_image = None
 
-        wb = load_workbook(upload)
-        ws = wb.active
-        header_map = _header_map([cell.value for cell in ws[1]])
-
-        def get_value(row, key):
-            idx = header_map.get(key)
-            return row[idx] if idx is not None else None
-
-        created = 0
-        updated = 0
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            item_id = get_value(row, "id")
-            category_value = get_value(row, "category")
-            name = get_value(row, "name")
-            content_name = get_value(row, "content_name")
-            object_image_url = get_value(row, "object_image_url")
-            object_color = get_value(row, "object_color")
-            order = get_value(row, "order")
-
-            if not category_value or not name:
-                continue
-
-            category = CategoryConfig.objects.filter(
-                category=int(category_value)
-            ).first()
-            if not category:
-                continue
-
-            if item_id:
-                item = LearnItem.objects.filter(id=int(item_id)).first()
-            else:
-                item = None
-
-            if not item:
-                item = LearnItem(category=category)
-                created += 1
-            else:
-                updated += 1
-
-            item.category = category
-            item.name = name
-            item.content_name = content_name
-            if order is not None:
-                item.order = int(order)
-
-            if object_image_url:
-                fallback = f"{slugify(name) or 'item'}.png"
-                content, filename = _download_to_content_file(
-                    object_image_url, fallback
-                )
-                item.object_image.save(filename, content, save=False)
-                item.object_color = None
-            elif object_color:
-                item.object_color = object_color
-                item.object_image = None
-
-            item.save()
-
-        return Response({"created": created, "updated": updated})
+        item.save()
+        return result
