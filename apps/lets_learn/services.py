@@ -7,6 +7,8 @@ from PIL import Image
 
 
 _COLOR_RE = re.compile(r"^#?[0-9a-fA-F]{3}$|^#?[0-9a-fA-F]{6}$")
+_SHORT_HEX_LENGTH = 4
+_LONG_HEX_LENGTH = 7
 
 CATEGORY_TRANSLATIONS = {
     "Your first alphabets": {"ne": "तिम्रा पहिलो अक्षरहरू", "hi": "आपके पहले अक्षर"},
@@ -26,16 +28,25 @@ CATEGORY_TRANSLATIONS = {
 }
 
 
+def _ensure_hash(value: str) -> str:
+    if value.startswith("#"):
+        return value
+    return f"#{value}"
+
+
+def _expand_short_hex(value: str) -> str:
+    return f"#{value[1]}{value[1]}{value[2]}{value[2]}{value[3]}{value[3]}"
+
+
 def normalize_color(value: str) -> str:
     value = value.strip()
     if not _COLOR_RE.match(value):
         raise ValidationError({"object_color": "Invalid color code."})
 
-    if not value.startswith('#'):
-        value = f"#{value}"
+    value = _ensure_hash(value)
 
-    if len(value) == 4:
-        value = f"#{value[1]}{value[1]}{value[2]}{value[2]}{value[3]}{value[3]}"
+    if len(value) == _SHORT_HEX_LENGTH:
+        value = _expand_short_hex(value)
 
     return value.lower()
 

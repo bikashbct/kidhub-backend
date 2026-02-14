@@ -5,22 +5,28 @@ from .services import validate_object_fields
 from .models import CategoryConfig, LearnItem
 
 
+_LANG_FIELD_MAP = {
+    "ne": "name_ne",
+    "hi": "name_hi",
+}
+
+
 class CategorySerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        lang = (self.context.get('lang') or 'en').lower()
-
-        if lang == 'ne' and instance.name_ne:
-            data['name'] = instance.name_ne
-        elif lang == 'hi' and instance.name_hi:
-            data['name'] = instance.name_hi
+        lang = (self.context.get("lang") or "en").lower()
+        field_name = _LANG_FIELD_MAP.get(lang)
+        if field_name:
+            translated = getattr(instance, field_name)
+            if translated:
+                data["name"] = translated
 
         return data
 
     class Meta:
         model = CategoryConfig
-        fields = ['id', 'name', 'name_ne', 'name_hi', 'slug', 'image']
-        read_only_fields = ['slug']
+        fields = ["id", "name", "name_ne", "name_hi", "slug", "image"]
+        read_only_fields = ["slug"]
 
 
 def _build_file_url(request, file_field):
@@ -33,7 +39,7 @@ def _build_file_url(request, file_field):
 
 class LearnItemSerializer(serializers.ModelSerializer):
     category = serializers.SlugRelatedField(
-        slug_field='category',
+        slug_field="category",
         queryset=CategoryConfig.objects.all(),
     )
 
@@ -52,17 +58,17 @@ class LearnItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = LearnItem
         fields = [
-            'id',
-            'category',
-            'name',
-            'slug',
-            'content_name',
-            'object_image',
-            'object_color',
-            'audio',
-            'order',
+            "id",
+            "category",
+            "name",
+            "slug",
+            "content_name",
+            "object_image",
+            "object_color",
+            "audio",
+            "order",
         ]
-        read_only_fields = ['slug']
+        read_only_fields = ["slug"]
 
 
 class LearnItemExportSerializer(serializers.ModelSerializer):
@@ -73,14 +79,14 @@ class LearnItemExportSerializer(serializers.ModelSerializer):
     class Meta:
         model = LearnItem
         fields = [
-            'id',
-            'category',
-            'name',
-            'content_name',
-            'object_image_url',
-            'object_color',
-            'audio_url',
-            'order',
+            "id",
+            "category",
+            "name",
+            "content_name",
+            "object_image_url",
+            "object_color",
+            "audio_url",
+            "order",
         ]
 
     def get_category(self, instance):

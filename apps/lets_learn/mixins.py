@@ -10,12 +10,11 @@ from rest_framework.response import Response
 
 
 def header_map(values) -> dict[str, int]:
-    mapping: dict[str, int] = {}
-    for idx, value in enumerate(values):
-        if value is None:
-            continue
-        mapping[str(value).strip()] = idx
-    return mapping
+    return {
+        str(value).strip(): idx
+        for idx, value in enumerate(values)
+        if value is not None
+    }
 
 
 class XlsxImportSerializer(serializers.Serializer):

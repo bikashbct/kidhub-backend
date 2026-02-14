@@ -16,11 +16,21 @@ from .serializers import (
     LearnItemSerializer,
 )
 
+DEFAULT_LANG = "en"
+ALLOWED_LANGS = {"en", "ne", "hi"}
+IMPORT_HEADERS_WITH_CATEGORY = ("category", "name")
+IMPORT_HEADERS_WITHOUT_CATEGORY = ("name",)
+FILTERSET_FIELDS = ["category"]
+
 class AdminWriteOrReadOnly(BasePermission):
     def has_permission(self, request, view):
         if request.method in SAFE_METHODS:
             return True
-        return bool(request.user and request.user.is_authenticated and request.user.is_staff)
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and request.user.is_staff
+        )
 
 
 def _download_to_content_file(url: str, fallback_name: str) -> tuple[ContentFile, str]:
@@ -40,6 +50,13 @@ def _get_category_from_request(request):
     return CategoryConfig.objects.filter(category=value).first()
 
 
+def _get_lang_from_request(request) -> str:
+    lang = (request.query_params.get("lang") or DEFAULT_LANG).lower()
+    if lang not in ALLOWED_LANGS:
+        return DEFAULT_LANG
+    return lang
+
+
 def _category_filename(category, fallback):
     if not category:
         return fallback
@@ -54,13 +71,9 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CategorySerializer
     permission_classes = [AdminWriteOrReadOnly]
 
-
     def get_serializer_context(self):
         context = super().get_serializer_context()
-        lang = (self.request.query_params.get('lang') or 'en').lower()
-        if lang not in ('en', 'ne', 'hi'):
-            lang = 'en'
-        context['lang'] = lang
+        context["lang"] = _get_lang_from_request(self.request)
         return context
 
 
@@ -77,19 +90,22 @@ class LearnItemViewSet(
     serializer_class = LearnItemSerializer
     export_serializer_class = LearnItemExportSerializer
     filename = "learn_items.xlsx"
-    filterset_fields = ['category']
+    filterset_fields = FILTERSET_FIELDS
     permission_classes = [AdminWriteOrReadOnly]
 
+    def _get_request_category(self):
+        return _get_category_from_request(self.request)
+
     def get_filename(self, request, *args, **kwargs):
-        return _category_filename(_get_category_from_request(request), self.filename)
+        return _category_filename(self._get_request_category(), self.filename)
 
     def get_import_expected_filename(self, request):
-        return _category_filename(_get_category_from_request(request), self.filename)
+        return _category_filename(self._get_request_category(), self.filename)
 
     def get_import_required_headers(self):
-        if _get_category_from_request(self.request):
-            return ["name"]
-        return ["category", "name"]
+        if self._get_request_category():
+            return list(IMPORT_HEADERS_WITHOUT_CATEGORY)
+        return list(IMPORT_HEADERS_WITH_CATEGORY)
 
     def handle_import_row(self, row, header_mapping):
         item_id = self.get_import_row_value(row, header_mapping, "id")
@@ -102,7 +118,7 @@ class LearnItemViewSet(
         object_color = self.get_import_row_value(row, header_mapping, "object_color")
         order = self.get_import_row_value(row, header_mapping, "order")
 
-        default_category = _get_category_from_request(self.request)
+        default_category = self._get_request_category()
 
         if not name:
             return "skipped"
@@ -119,10 +135,7 @@ class LearnItemViewSet(
         else:
             category = default_category
 
-        if item_id:
-            item = LearnItem.objects.filter(id=int(item_id)).first()
-        else:
-            item = None
+        item = LearnItem.objects.filter(id=int(item_id)).first() if item_id else None
 
         if not item:
             item = LearnItem(category=category)
