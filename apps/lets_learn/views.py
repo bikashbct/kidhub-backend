@@ -83,7 +83,12 @@ class LearnItemViewSet(
     def get_filename(self, request, *args, **kwargs):
         return _category_filename(_get_category_from_request(request), self.filename)
 
+    def get_import_expected_filename(self, request):
+        return _category_filename(_get_category_from_request(request), self.filename)
+
     def get_import_required_headers(self):
+        if _get_category_from_request(self.request):
+            return ["name"]
         return ["category", "name"]
 
     def handle_import_row(self, row, header_mapping):
@@ -97,14 +102,22 @@ class LearnItemViewSet(
         object_color = self.get_import_row_value(row, header_mapping, "object_color")
         order = self.get_import_row_value(row, header_mapping, "order")
 
-        if not category_value or not name:
+        default_category = _get_category_from_request(self.request)
+
+        if not name:
             return "skipped"
 
-        category = CategoryConfig.objects.filter(
-            category=int(category_value)
-        ).first()
-        if not category:
+        if not category_value and not default_category:
             return "skipped"
+
+        if category_value:
+            category = CategoryConfig.objects.filter(
+                category=int(category_value)
+            ).first()
+            if not category:
+                return "skipped"
+        else:
+            category = default_category
 
         if item_id:
             item = LearnItem.objects.filter(id=int(item_id)).first()
