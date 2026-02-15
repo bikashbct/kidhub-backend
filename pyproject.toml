@@ -9,6 +9,7 @@ dependencies = [
     "django-cors-headers>=4.7.0",
     "djangorestframework>=3.16.1",
     "djangorestframework-simplejwt>=5.5.1",
+    "drf-yasg>=1.21.7",
     "whitenoise>=6.6.0",
     "openpyxl>=3.1.5",
     "pillow>=12.1.0",
