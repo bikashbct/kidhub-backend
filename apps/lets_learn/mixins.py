@@ -25,6 +25,8 @@ class XlsxExportImportMixin(XLSXFileMixin):
     export_serializer_class = None
     import_serializer_class = XlsxImportSerializer
     filename = "export.xlsx"
+    import_required_headers = []
+    import_expected_filename = None
 
     def get_export_serializer_class(self):
         if self.export_serializer_class is None:
@@ -33,23 +35,10 @@ class XlsxExportImportMixin(XLSXFileMixin):
             )
         return self.export_serializer_class
 
-    def get_import_serializer_class(self):
-        return self.import_serializer_class
-
     def get_serializer_class(self):
         if getattr(self, "action", None) == "import_xlsx":
-            return self.get_import_serializer_class()
+            return self.import_serializer_class
         return super().get_serializer_class()
-
-    def get_import_required_headers(self):
-        return []
-
-    def get_import_expected_filename(self, request):
-        return None
-
-    def get_import_row_value(self, row, header_mapping, key):
-        idx = header_mapping.get(key)
-        return row[idx] if idx is not None else None
 
     def handle_import_row(self, row, header_mapping):
         raise NotImplementedError
@@ -84,10 +73,7 @@ class XlsxExportImportMixin(XLSXFileMixin):
         serializer.is_valid(raise_exception=True)
         upload = serializer.validated_data["xlsx_file"]
 
-        try:
-            expected_filename = self.get_import_expected_filename(request)
-        except ValueError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        expected_filename = self.import_expected_filename
 
         if expected_filename:
             actual_name = os.path.basename(upload.name or "")
@@ -100,7 +86,7 @@ class XlsxExportImportMixin(XLSXFileMixin):
         wb = load_workbook(upload)
         ws = wb.active
         header_mapping = header_map([cell.value for cell in ws[1]])
-        required = self.get_import_required_headers()
+        required = self.import_required_headers
         missing = [name for name in required if name not in header_mapping]
         if missing:
             return Response(
